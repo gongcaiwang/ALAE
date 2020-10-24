@@ -59,11 +59,12 @@ class RunningMeanTorch:
 
 
 class LossTracker:
-    def __init__(self, output_folder='.'):
+    def __init__(self, output_folder='.',test=False):
         self.tracks = OrderedDict()
         self.epochs = []
         self.means_over_epochs = OrderedDict()
         self.output_folder = output_folder
+        self.filename = 'log_test.csv' if test else 'log_train.csv'
 
     def update(self, d):
         for k, v in d.items():
@@ -91,8 +92,7 @@ class LossTracker:
                 value.reset()
             else:
                 self.means_over_epochs[key].append(None)
-
-        with open(os.path.join(self.output_folder, 'log.csv'), mode='w') as csv_file:
+        with open(os.path.join(self.output_folder, self.filename), mode='w') as csv_file:
             fieldnames = ['epoch'] + [key+str(i) for key in list(self.tracks.keys()) for i in range(self.means_over_epochs[key][0].size)]
             # fieldnames = ['epoch'] + [list(self.tracks.keys())]
             writer = csv.writer(csv_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)

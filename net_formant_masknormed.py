@@ -203,7 +203,7 @@ class FormantSysth(nn.Module):
 #       masks = masks.unsqueeze(dim=1) #B,1,time,freqchans, formants
 #       return masks
    
-   def formant_mask(self,freq_hz,bandwith_hz,amplitude,linear=False, triangle_mask = False,duomask=True, n_formant_noise=1,f0_hz=None):
+   def formant_mask(self,freq_hz,bandwith_hz,amplitude,linear=False, triangle_mask = False,duomask=True, n_formant_noise=1,f0_hz=None,noise=False):
       # freq, bandwith, amplitude: B*formants*time
       freq_cord = torch.arange(self.n_fft if linear else self.n_mels)
       time_cord = torch.arange(freq_hz.shape[2])
@@ -217,20 +217,17 @@ class FormantSysth(nn.Module):
       if self.power_synth:
          amplitude = amplitude
       alpha = (2*np.sqrt(2*np.log(np.sqrt(2))))
-      if self.return_wave:
-         t = torch.arange(int(f0_hz.shape[2]/self.spec_fr*self.wave_fr))/(1.0*self.wave_fr) #in second
-         t = t.unsqueeze(dim=0).unsqueeze(dim=0) #1, 1, time
+      if not noise:
          k = (torch.arange(self.k)+1).reshape([1,self.k,1])
-         # f0_hz_interp = F.interpolate(f0_hz,t.shape[-1],mode='linear',align_corners=False) #Bx1xT
-         # bandwith_hz_interp = F.interpolate(bandwith_hz.permute(0,2,3,1),[bandwith_hz.shape[-1],t.shape[-1]],mode='bilinear',align_corners=False).permute(0,3,1,2) #Bx1xT
-         # freq_hz_interp = F.interpolate(freq_hz.permute(0,2,3,1),[freq_hz.shape[-1],t.shape[-1]],mode='bilinear',align_corners=False).permute(0,3,1,2) #Bx1xT
          k_f0 = k*f0_hz #BxkxT
+         freq_range = (-torch.sign(k_f0-7800)*0.5+0.5)
          k_f0 = k_f0.permute([0,2,1]).unsqueeze(-1) #BxTxkx1
-    #   masks = amplitude*torch.exp(-((grid_freq_hz-freq_hz))**2/(2*(bandwith_hz/alpha+0.01)**2)) if self.wavebased else amplitude*torch.exp(-(0.693*(grid_freq_hz-freq_hz))**2/(2*(bandwith_hz+0.01)**2)) #B,time,freqchans, formants
-         # amplitude_interp = F.interpolate(amplitude.permute(0,2,3,1),[amplitude.shape[-1],t.shape[-1]],mode='bilinear',align_corners=False).permute(0,3,1,2) #Bx1xT
-         hamonic_dist = (amplitude*torch.exp(-((k_f0-freq_hz))**2/(2*(bandwith_hz/alpha+0.01)**2))).sqrt().sum(-1).permute([0,2,1]) #BxkxT
-         # hamonic_dist = (amplitude*torch.exp(-((k_f0-freq_hz))**2/(2*(bandwith_hz/alpha+0.01)**2))).sum(-1).permute([0,2,1]) #BxkxT
-         hamonic_dist = F.interpolate(hamonic_dist,int(f0_hz.shape[2]/self.spec_fr*self.wave_fr),mode = 'linear',align_corners=False)
+         hamonic_dist = (amplitude*(torch.exp(-((k_f0-freq_hz))**2/(2*(bandwith_hz/alpha+0.01)**2))+1E-6).sqrt()).sum(-1).permute([0,2,1]) #BxkxT
+         norm = (((hamonic_dist*freq_range)**2).sum(1,keepdim=True)+1E-10).sqrt()+1E-10 #Bx1xT
+         hamonic_dist = (hamonic_dist*freq_range)/norm # sum_k(hamonic_dist**2) = 1, 
+         if self.return_wave:
+            t = torch.arange(int(f0_hz.shape[2]/self.spec_fr*self.wave_fr))/(1.0*self.wave_fr) #in second
+            hamonic_dist = F.interpolate(hamonic_dist,int(f0_hz.shape[2]/self.spec_fr*self.wave_fr),mode = 'linear',align_corners=False)
       # if self.wavebased:
       if triangle_mask:
          if duomask:
@@ -249,6 +246,19 @@ class FormantSysth(nn.Module):
          else:
             # masks = amplitude*torch.exp(-((grid_freq_hz-freq_hz))**2/(2*(bandwith_hz/alpha+0.01)**2))
             masks = amplitude*(torch.exp(-((grid_freq_hz-freq_hz))**2/(2*(bandwith_hz/alpha+0.01)**2))+1E-6).sqrt()
+            # masks = amplitude*(torch.exp(-((grid_freq_hz-freq_hz))**2/((2*(bandwith_hz/alpha+0.01)**2)))+1E-10).sqrt() #B,t,freq,formants
+      if noise:
+         masks_sum = masks.sum(-1,keepdim=True)
+         masks = masks/((((masks_sum**2).sum(-2,keepdim=True)/self.n_fft)+1E-10).sqrt()+1E-10)
+         masks = masks.unsqueeze(dim=1) #B,1,time,freqchans, formants
+         return masks
+      else:
+         masks = masks/norm.squeeze(1).unsqueeze(-1).unsqueeze(-1)
+         masks = masks.unsqueeze(dim=1) #B,1,time,freqchans, formants
+         if self.return_wave:
+            return masks, hamonic_dist#B,1,time,freqchans
+         else:
+            return masks
       # else:
       #    if triangle_mask:
       #       if duomask:
@@ -266,11 +276,11 @@ class FormantSysth(nn.Module):
       #       masks = amplitude*torch.exp(-((grid_freq_hz-freq_hz))**2/(2*(bandwith_hz/alpha+0.01)**2))
       # masks = amplitude*torch.exp(-((grid_freq_hz-freq_hz))**2/(2*(bandwith_hz/(2*np.sqrt(2*np.log(2)))+0.01)**2)) #B,time,freqchans, formants
       # masks = amplitude*torch.exp(-(0.693*(grid_freq_hz-freq_hz))**2/(2*(bandwith_hz+0.01)**2)) #B,time,freqchans, formants
-      masks = masks.unsqueeze(dim=1) #B,1,time,freqchans, formants
-      if self.return_wave:
-         return masks, hamonic_dist#B,1,time,freqchans
-      else:
-         return masks
+      # masks = masks.unsqueeze(dim=1) #B,1,time,freqchans, formants
+      # if self.return_wave:
+      #    return masks, hamonic_dist#B,1,time,freqchans
+      # else:
+      #    return masks
 
    def voicing_wavebased(self,f0_hz):
       #f0: B*1*time, hz
@@ -453,33 +463,35 @@ class FormantSysth(nn.Module):
     #   bandwidth_formants = components['bandwidth_formants']*self.n_mels
       # excitation = amplitudes[:,0:1]*hamonics
       # excitation = loudness*(amplitudes[:,0:1]*hamonics)
-      # self.noise = self.noise
-      self.excitation_noise = loudness*(amplitudes[:,-1:])*self.noise if self.power_synth else loudness*amplitudes[:,-1:]*self.noise
+      
+      self.excitation_noise = loudness*(amplitudes[:,-1:])*self.noise if self.power_synth else (loudness*amplitudes[:,-1:]+1E-10).sqrt()*self.noise
       duomask = components['freq_formants_noise_hz'].shape[1]>components['freq_formants_hamon_hz'].shape[1]
       n_formant_noise = (components['freq_formants_noise_hz'].shape[1]-components['freq_formants_hamon_hz'].shape[1]) if duomask else components['freq_formants_noise_hz'].shape[1]
       self.mask_hamon = self.formant_mask(components['freq_formants_hamon_hz'],components['bandwidth_formants_hamon_hz'],components['amplitude_formants_hamon'],linear = self.linear_scale,f0_hz = f0_hz)
-      self.mask_noise = self.formant_mask(components['freq_formants_noise_hz'],components['bandwidth_formants_noise_hz'],components['amplitude_formants_noise'],linear = self.linear_scale,triangle_mask=False if self.wavebased else True,duomask=duomask,n_formant_noise=n_formant_noise,f0_hz = f0_hz)
+      self.mask_noise = self.formant_mask(components['freq_formants_noise_hz'],components['bandwidth_formants_noise_hz'],components['amplitude_formants_noise'],linear = self.linear_scale,triangle_mask=False if self.wavebased else True,duomask=duomask,n_formant_noise=n_formant_noise,f0_hz = f0_hz,noise=True)
       # self.mask_hamon = self.formant_mask(components['freq_formants_hamon']*self.n_mels,components['bandwidth_formants_hamon'],components['amplitude_formants_hamon'])
       # self.mask_noise = self.formant_mask(components['freq_formants_noise']*self.n_mels,components['bandwidth_formants_noise'],components['amplitude_formants_noise'])
       if self.return_wave:
          self.hamonics,self.hamonics_wave = self.hamonics
          self.mask_hamon, self.hamonic_dist = self.mask_hamon
-         self.mask_noise, self.mask_noise_only = self.mask_noise
+         self.mask_noise = self.mask_noise
          if self.power_synth:
-            self.excitation_hamon_wave = F.interpolate((loudness[...,-1]*amplitudes[:,0:1][...,-1]).sqrt(),self.hamonics_wave.shape[-1],mode='linear',align_corners=False)*self.hamonics_wave
+            self.excitation_hamon_wave = F.interpolate(loudness[...,-1].sqrt()*amplitudes[:,0:1][...,-1],self.hamonics_wave.shape[-1],mode='linear',align_corners=False)*self.hamonics_wave
          else:
-            self.excitation_hamon_wave = F.interpolate(loudness[...,-1]*amplitudes[:,0:1][...,-1],self.hamonics_wave.shape[-1],mode='linear',align_corners=False)*self.hamonics_wave
+            self.excitation_hamon_wave = F.interpolate((loudness[...,-1]*amplitudes[:,0:1][...,-1]+1E-10).sqrt(),self.hamonics_wave.shape[-1],mode='linear',align_corners=False)*self.hamonics_wave
          self.hamonics_wave_ = (self.excitation_hamon_wave*self.hamonic_dist).sum(1,keepdim=True)
-
-      self.mask_hamon_sum = self.mask_hamon.sum(dim=-1)
+      # self.hamonics = 40*self.hamonics
+      self.mask_hamon_sum = 1.414*self.mask_hamon.sum(dim=-1)
+      # self.mask_hamon_sum = self.mask_hamon.sum(dim=-1)
       self.mask_noise_sum = self.mask_noise.sum(dim=-1)
       bgdist = F.softplus(self.bgnoise_amp)*self.noise_dist if self.noise_from_data else F.softplus(self.bgnoise_dist)
       if self.power_synth:
          self.excitation_hamon = loudness*(amplitudes[:,0:1])*self.hamonics
       else:
-         self.excitation_hamon = loudness*amplitudes[:,0:1]*self.hamonics
+         self.excitation_hamon = (loudness*amplitudes[:,0:1]+1E-10).sqrt()*self.hamonics
       # import pdb;pdb.set_trace()
       self.noise_excitation = self.excitation_noise*self.mask_noise_sum
+      # import pdb; pdb.set_trace()
       if self.return_wave:
          self.noise_excitation_wave = 2*inverse_spec_to_audio(self.noise_excitation.squeeze(1).permute(0,2,1),n_fft=self.n_fft*2-1,power_synth=self.power_synth)
          self.noise_excitation_wave = F.pad(self.noise_excitation_wave,[0,self.hamonics_wave_.shape[2]-self.noise_excitation_wave.shape[1]])
@@ -498,9 +510,7 @@ class FormantSysth(nn.Module):
          #  speech = self.excitation_hamon*self.mask_hamon_sum + (self.excitation_noise*self.mask_noise_sum if enable_noise_excitation else 0) + self.silient*torch.ones(self.mask_hamon_sum.shape)
          if not self.dbbased:
             speech = db(speech)
-
-        
-    #   import pdb;pdb.set_trace() 
+      # import pdb; pdb.set_trace()
       if self.return_wave:
          return speech,self.rec_wave
       else:
@@ -601,7 +611,7 @@ class FormantEncoder(nn.Module):
                                        nn.LeakyReLU(0.2),
                                        ln.Conv1d(128,128,1,1,0),
                                        nn.LeakyReLU(0.2),
-                                       ln.Conv1d(128,1,1,1,0,bias_initial=-9. if power_synth else -4.6),)
+                                       ln.Conv1d(128,1,1,1,0,bias_initial=-9.),)
 
       if self.broud:
          self.conv_formants = ln.Conv1d(128,128,3,1,1)
@@ -632,6 +642,7 @@ class FormantEncoder(nn.Module):
          x_amp = amplitude(x,self.noise_db,self.max_db,trim_noise=True)
       else:
          x_amp = x_amp.squeeze(dim=1).permute(0,2,1)
+      # import pdb; pdb.set_trace()
       hann_win = torch.hann_window(5,periodic=False).reshape([1,1,5,1])
       x_smooth = F.conv2d(x.unsqueeze(1).transpose(-2,-1),hann_win,padding=[2,0]).transpose(-2,-1).squeeze(1)
       x_amp_smooth = F.conv2d(x_amp.unsqueeze(1).transpose(-2,-1),hann_win,padding=[2,0]).transpose(-2,-1).squeeze(1)
@@ -644,8 +655,8 @@ class FormantEncoder(nn.Module):
       if self.power_synth:
          loudness = F.softplus((1. if self.wavebased else 1.0)*self.conv_loudness(x_smooth))
       else:
+         # loudness = F.softplus((1. if self.wavebased else 1.0)*self.conv_loudness(x_amp**2))
          loudness = F.softplus((1. if self.wavebased else 1.0)*self.conv_loudness(x_smooth))
-      # loudness = F.softplus((1. if self.wavebased else 1.0)*self.conv_loudness(x))
       # loudness  = F.relu(self.conv_loudness(x))
 
       # if not self.power_synth:

@@ -10,9 +10,13 @@ import random
 import pandas
 from torch.utils.data import Dataset
 from defaults import get_cfg_defaults
+from net_formant import wave2spec
 cfg = get_cfg_defaults()
 cfg.merge_from_file('configs/ecog_style2.yaml')
 BCTS = cfg.DATASET.BCTS
+if not cfg.MODEL.POWER_SYNTH:
+    cfg.MODEL.NOISE_DB = cfg.MODEL.NOISE_DB_AMP
+    cfg.MODEL.MAX_DB = cfg.MODEL.MAX_DB_AMP
 
 class ECoGDataset(Dataset):
     """docstring for ECoGDataset"""
@@ -136,6 +140,7 @@ class ECoGDataset(Dataset):
         [self.SelectRegion.extend(self.cortex[area]) for area in train_param["SelectRegion"]]
         self.BlockRegion = []
         [self.BlockRegion.extend(self.cortex[area]) for area in train_param["BlockRegion"]]
+        self.wavebased = cfg.MODEL.WAVE_BASED
         self.ReshapeAsGrid = False if 'Transformer' in cfg.MODEL.MAPPING_FROM_ECOG else True
         self.Prod,self.UseGridOnly,self.SeqLen = train_param['Prod'],\
                                                                     train_param['UseGridOnly'],\
@@ -145,6 +150,7 @@ class ECoGDataset(Dataset):
         self.DOWN_TF_FS = train_param['DOWN_TF_FS']
         self.DOWN_ECOG_FS = train_param['DOWN_ECOG_FS']
         self.TestNum_cum=np.array([],dtype=np.int32)
+        self.Wipenoise = False
                                                                     
         datapath = []
         analysispath = []
@@ -173,6 +179,13 @@ class ECoGDataset(Dataset):
         label_alldataset = []
         wave_alldataset = []
         wave_re_alldataset = []
+        wave_re_spec_alldataset = []
+        wave_re_spec_amp_alldataset = []
+        wave_re_denoise_alldataset = []
+        wave_re_spec_denoise_alldataset = []
+        wave_spec_alldataset = []
+        noisesample_re_alldataset = []
+        noisesample_alldataset = []
         bad_samples_alldataset = []
         baseline_alldataset = []
         mni_coordinate_alldateset = []
@@ -234,8 +247,15 @@ class ECoGDataset(Dataset):
             end_ind_re_wave_down_valid_test_ =[]
             spkr_=[]
             wave_=[]
+            wave_spec_=[]
             spkr_re_=[]
             wave_re_=[]
+            noisesample_re_=[]
+            noisesample_=[]
+            wave_re_spec_=[]
+            wave_re_spec_amp_=[]
+            wave_re_denoise_=[]
+            wave_re_spec_denoise_=[]
             word_train=[]
             labels_train=[]
             word_test=[]
@@ -313,6 +333,8 @@ class ECoGDataset(Dataset):
                 ecog = signal.resample_poly(ecog,self.DOWN_ECOG_FS*10000,30517625,axis=0) if HD else signal.resample_poly(ecog,self.DOWN_ECOG_FS,self.ORG_ECOG_FS_NY,axis=0) # resample to 125 hz
                 baseline_ind = np.concatenate([np.arange(start_ind_valid[i]-self.DOWN_ECOG_FS//4,start_ind_valid[i]-self.DOWN_ECOG_FS//20) \
                                             for i in range(len(start_ind_valid))]) #baseline: 1/4 s - 1/20 s before stimulis onset
+                baseline_ind_spec = np.concatenate([np.arange((start_ind_valid[i]*1.0/self.DOWN_ECOG_FS*self.DOWN_TF_FS-self.DOWN_TF_FS//4).astype(np.int64),(start_ind_valid[i]*1.0/self.DOWN_ECOG_FS*self.DOWN_TF_FS-self.DOWN_TF_FS//8).astype(np.int64)) \
+                                            for i in range(len(start_ind_valid))]) #baseline: 1/4 s - 1/8 s before stimulis onset
                 baseline = ecog[baseline_ind]
                 statics_ecog = baseline.mean(axis=0,keepdims=True)+1E-10, np.sqrt(baseline.var(axis=0, keepdims=True))+1E-10
 
@@ -393,15 +415,16 @@ class ECoGDataset(Dataset):
                 if xx==0:
                     statics_spkr = samples_for_statics.mean(axis=0,keepdims=True)+1E-10, np.sqrt(samples_for_statics.var(axis=0, keepdims=True))+1E-10
                 # print(statics_spkr)
-                for samples in range(start_ind.shape[0]):
-                    if not np.isnan(start_ind[samples]):
-                        if samples ==0:
-                            spkr[:start_ind[samples]] = 0
-                        else:
-                            spkr[end_ind[samples-1]:start_ind[samples]] = 0
-                        if samples ==start_ind.shape[0]-1:
-                            spkr[end_ind[samples]:] = 0
-                spkr = (np.clip(spkr,0.,50.)-25.)/25.
+                if self.Wipenoise:
+                    for samples in range(start_ind.shape[0]):
+                        if not np.isnan(start_ind[samples]):
+                            if samples ==0:
+                                spkr[:start_ind[samples]] = 0
+                            else:
+                                spkr[end_ind[samples-1]:start_ind[samples]] = 0
+                            if samples ==start_ind.shape[0]-1:
+                                spkr[end_ind[samples]:] = 0
+                spkr = (np.clip(spkr,0.,70.)-35.)/35.
                 # spkr = (spkr - statics_spkr[0])/statics_spkr[1]
                 spkr_trim = np.zeros([int(ecog.shape[0]*1.0/self.DOWN_ECOG_FS*self.DOWN_TF_FS),spkr.shape[1]])
                 if spkr.shape[0]>spkr_trim.shape[0]:
@@ -413,7 +436,7 @@ class ECoGDataset(Dataset):
                 spkr_+=[spkr]
 
                 if not self.Prod:
-                    wavedata = wavedata = h5py.File(os.path.join(datapath_task,'spkr_16k.mat'),'r')
+                    wavedata = h5py.File(os.path.join(datapath_task,'spkr_16k.mat'),'r')
                     wavearray = np.asarray(wavedata['spkr'])
                     wave_trim = np.zeros([int(ecog.shape[0]*1.0/self.DOWN_ECOG_FS*self.DOWN_WAVE_FS),wavearray.shape[1]])
                 else:
@@ -427,11 +450,27 @@ class ECoGDataset(Dataset):
                     wave_trim[:wavearray.shape[0]] = wavearray
                     wavearray = wave_trim
                 wave_+=[wavearray]
-
+                if cfg.MODEL.WAVE_BASED:
+                    wave_spec = wave2spec(torch.tensor(wavearray.T),n_fft=cfg.MODEL.N_FFT,noise_db=cfg.MODEL.NOISE_DB,max_db=cfg.MODEL.MAX_DB,power=2 if cfg.MODEL.POWER_SYNTH else 1)[0].detach().cpu().numpy()
+                    # wave_spec_amp = wave2spec(torch.tensor(wavearray.T),n_fft=cfg.MODEL.N_FFT,noise_db=cfg.MODEL.NOISE_DB,max_db=cfg.MODEL.MAX_DB,to_db=False,power=2 if cfg.MODEL.POWER_SYNTH else 1)[0].detach().cpu().numpy()
+                    noisesample = wave_spec[baseline_ind_spec]
+                    for samples in range(start_ind.shape[0]):
+                        if not np.isnan(start_ind[samples]):
+                            if samples ==0:
+                                wave_spec[:start_ind[samples]] = -1
+                            else:
+                                wave_spec[end_ind[samples-1]:start_ind[samples]] = -1
+                            if samples ==start_ind.shape[0]-1:
+                                wave_spec[end_ind[samples]:] = -1
+                    wave_spec_ +=[wave_spec]
+                else:
+                    noisesample = spkr[...,baseline_ind_spec]
+                noisesample_ += [noisesample]
                 if self.Prod:
-                    spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k_wide.mat'),'r')
+                    # spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k_wide.mat'),'r')
+                    spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k_lownoisedb.mat'),'r')
                     # spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_denoise_16k.mat'),'r')
-                    # spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_16k.mat'),'r')
+                    # spkr_redata = h5py.File(os.path.join(datapath_task,'TFzoom'+str(self.SpecBands)+'_16k_log10.mat'),'r')
                     spkr_re = np.asarray(spkr_redata['TFlog'])
                     spkr_re = signal.resample(spkr_re,int(1.0*spkr_re.shape[0]/self.ORG_TF_FS*self.DOWN_TF_FS),axis=0)
                     if HD:
@@ -442,16 +481,18 @@ class ECoGDataset(Dataset):
                     if xx==0:
                         statics_spkr_re = samples_for_statics_re.mean(axis=0,keepdims=True)+1E-10, np.sqrt(samples_for_statics_re.var(axis=0, keepdims=True))+1E-10
                     # print(statics_spkr_re)
-                    if subj is not "NY717" or (task_to_use is not 'VisRead' and task_to_use is not 'PicN'):
-                        for samples in range(start_ind_re.shape[0]):
-                            if not np.isnan(start_ind_re[samples]):
-                                if samples ==0:
-                                    spkr_re[:start_ind_re[samples]] = 0
-                                else:
-                                    spkr_re[end_ind_re[samples-1]:start_ind_re[samples]] = 0
-                                if samples ==start_ind_re.shape[0]-1:
-                                    spkr_re[end_ind_re[samples]:] = 0
-                    spkr_re = (np.clip(spkr_re,0.,50.)-25.)/25.
+                    if self.Wipenoise:
+                        if subj is not "NY717" or (task_to_use is not 'VisRead' and task_to_use is not 'PicN'):
+                            for samples in range(start_ind_re.shape[0]):
+                                if not np.isnan(start_ind_re[samples]):
+                                    if samples ==0:
+                                        spkr_re[:start_ind_re[samples]] = 0
+                                    else:
+                                        spkr_re[end_ind_re[samples-1]:start_ind_re[samples]] = 0
+                                    if samples ==start_ind_re.shape[0]-1:
+                                        spkr_re[end_ind_re[samples]:] = 0
+                    spkr_re = (np.clip(spkr_re,0.,70.)-35.)/35.
+                    # spkr_re = (np.clip(spkr_re,0.,50.)-25.)/25.
                     # spkr_re = (spkr_re - statics_spkr_re[0])/statics_spkr_re[1]
                     spkr_re_trim = np.zeros([int(ecog.shape[0]*1.0/self.DOWN_ECOG_FS*self.DOWN_TF_FS),spkr_re.shape[1]])
                     if spkr_re.shape[0]>spkr_re_trim.shape[0]:
@@ -462,19 +503,59 @@ class ECoGDataset(Dataset):
                         spkr_re = spkr_re_trim
                     spkr_re_+=[spkr_re]
 
-                    wave_redata = h5py.File(os.path.join(datapath_task,'zoom_denoise_16k.mat'),'r')
-                    # wave_redata = h5py.File(os.path.join(datapath_task,'zoom_16k.mat'),'r')
+                    
+                    # wave_redata = h5py.File(os.path.join(datapath_task,'zoom_denoise_16k.mat'),'r')
+                    wave_redata = h5py.File(os.path.join(datapath_task,'zoom_16k.mat'),'r')
                     wave_rearray = np.asarray(wave_redata['zoom'])
                     wave_rearray = wave_rearray.T
                     wave_re_trim = np.zeros([int(ecog.shape[0]*1.0/self.DOWN_ECOG_FS*self.DOWN_WAVE_FS),wave_rearray.shape[1]])
+                    wave_redata_denoise = h5py.File(os.path.join(datapath_task,'zoom_denoise_16k.mat'),'r')
+                    wave_rearray_denoise = np.asarray(wave_redata_denoise['zoom'])
+                    wave_rearray_denoise = wave_rearray_denoise.T
+                    wave_re_trim_denoise = np.zeros([int(ecog.shape[0]*1.0/self.DOWN_ECOG_FS*self.DOWN_WAVE_FS),wave_rearray_denoise.shape[1]])
                     if wave_rearray.shape[0]>wave_re_trim.shape[0]:
                         wave_re_trim = wave_rearray[:wave_re_trim.shape[0]]
                         wave_rearray = wave_re_trim
+                        wave_re_trim_denoise = wave_rearray_denoise[:wave_re_trim_denoise.shape[0]]
+                        wave_rearray_denoise = wave_re_trim_denoise
+
                     else:
                         wave_re_trim[:wave_rearray.shape[0]] = wave_rearray
                         wave_rearray = wave_re_trim
+                        wave_re_trim_denoise[:wave_rearray_denoise.shape[0]] = wave_rearray_denoise
+                        wave_rearray_denoise = wave_re_trim_denoise
                     wave_re_+=[wave_rearray]
+                    wave_re_denoise_+=[wave_rearray_denoise]
 
+                    if cfg.MODEL.WAVE_BASED:
+                        wave_re_spec = wave2spec(torch.tensor(wave_rearray.T),n_fft=cfg.MODEL.N_FFT,noise_db=cfg.MODEL.NOISE_DB,max_db=cfg.MODEL.MAX_DB,power=2 if cfg.MODEL.POWER_SYNTH else 1)[0].detach().cpu().numpy()
+                        wave_re_spec_amp = wave2spec(torch.tensor(wave_rearray.T),n_fft=cfg.MODEL.N_FFT,noise_db=cfg.MODEL.NOISE_DB,max_db=cfg.MODEL.MAX_DB,to_db=False,power=2 if cfg.MODEL.POWER_SYNTH else 1)[0].detach().cpu().numpy()
+                        wave_re_spec_denoise = wave2spec(torch.tensor(wave_rearray_denoise.T),n_fft=cfg.MODEL.N_FFT,noise_db=cfg.MODEL.NOISE_DB,max_db=cfg.MODEL.MAX_DB,power=2 if cfg.MODEL.POWER_SYNTH else 1)[0].detach().cpu().numpy()
+                        noisesample_re = wave_re_spec[baseline_ind_spec]
+                        if self.Wipenoise:
+                            if subj is not "NY717" or (task_to_use is not 'VisRead' and task_to_use is not 'PicN'):
+                                for samples in range(start_ind_re.shape[0]):
+                                    if not np.isnan(start_ind_re[samples]):
+                                        if samples ==0:
+                                            wave_re_spec[:start_ind_re[samples]] = -1
+                                            wave_re_spec_amp[:start_ind_re[samples]] = 0
+                                            wave_re_spec_denoise[:start_ind_re[samples]] = -1
+                                        else:
+                                            wave_re_spec[end_ind_re[samples-1]:start_ind_re[samples]] = -1
+                                            wave_re_spec_amp[end_ind_re[samples-1]:start_ind_re[samples]] = 0
+                                            wave_re_spec_denoise[end_ind_re[samples-1]:start_ind_re[samples]] = -1
+                                        if samples ==start_ind_re.shape[0]-1:
+                                            wave_re_spec[end_ind_re[samples]:] = -1
+                                            wave_re_spec_amp[end_ind_re[samples]:] = 0
+                                            wave_re_spec_denoise[end_ind_re[samples]:] = -1
+                        wave_re_spec_ +=[wave_re_spec]
+                        wave_re_spec_amp_ +=[wave_re_spec_amp]
+                        wave_re_spec_denoise_ +=[wave_re_spec_denoise]
+                    else:
+                        noisesample_re = spkr_re[...,baseline_ind_spec]
+                    noisesample_re_ += [noisesample_re]
+
+                        
 
                 if HD:
                     label_mat = scipy.io.loadmat(os.path.join(analysispath_task,'Events.mat'))['Events']['word'][0][:event_range]
@@ -571,6 +652,8 @@ class ECoGDataset(Dataset):
             mask_prior_alldataset += [mask]
             ecog_alldataset+= [ecog_]
             spkr_alldataset +=[np.concatenate(spkr_,axis=0)]
+            if self.wavebased:
+                wave_spec_alldataset +=[np.concatenate(wave_spec_,axis=0)]
             wave_alldataset +=[np.concatenate(wave_,axis=0)]
             start_ind_alldataset += [np.concatenate([np.concatenate(start_ind_train_,axis=0),np.concatenate(start_ind_test_,axis=0)])]
             start_ind_valid_alldataset += [np.concatenate([np.concatenate(start_ind_valid_train_,axis=0),np.concatenate(start_ind_valid_test_,axis=0)])]
@@ -581,9 +664,17 @@ class ECoGDataset(Dataset):
             end_ind_wave_alldataset += [np.concatenate([np.concatenate(end_ind_wave_down_train_,axis=0),np.concatenate(end_ind_wave_down_test_,axis=0)])]
             end_ind_wave_valid_alldataset += [np.concatenate([np.concatenate(end_ind_wave_down_valid_train_,axis=0),np.concatenate(end_ind_wave_down_valid_test_,axis=0)])]
             spkr_static_alldataset +=[statics_spkr]
+            noisesample_alldataset +=[np.concatenate(noisesample_,axis=0)]
             if self.Prod:
                 spkr_re_alldataset +=[np.concatenate(spkr_re_,axis=0)]
+                if self.wavebased:
+                    wave_re_spec_alldataset +=[np.concatenate(wave_re_spec_,axis=0)]
+                    wave_re_spec_amp_alldataset +=[np.concatenate(wave_re_spec_amp_,axis=0)]
+                    wave_re_spec_denoise_alldataset +=[np.concatenate(wave_re_spec_denoise_,axis=0)]
+                noise = 10**(((np.concatenate(noisesample_re_,axis=0).mean(0)+1)/2*(cfg.MODEL.MAX_DB-cfg.MODEL.NOISE_DB)+cfg.MODEL.NOISE_DB)/10)
+                noisesample_re_alldataset +=[noise]
                 wave_re_alldataset +=[np.concatenate(wave_re_,axis=0)]
+                wave_re_denoise_alldataset +=[np.concatenate(wave_re_denoise_,axis=0)]
                 start_ind_re_alldataset += [np.concatenate([np.concatenate(start_ind_re_train_,axis=0),np.concatenate(start_ind_re_test_,axis=0)])]
                 start_ind_re_valid_alldataset += [np.concatenate([np.concatenate(start_ind_re_valid_train_,axis=0),np.concatenate(start_ind_re_valid_test_,axis=0)])]
                 start_ind_re_wave_alldataset += [np.concatenate([np.concatenate(start_ind_re_wave_down_train_,axis=0),np.concatenate(start_ind_re_wave_down_test_,axis=0)])]
@@ -602,12 +693,17 @@ class ECoGDataset(Dataset):
         self.meta_data = {'ecog_alldataset':ecog_alldataset,
                     'spkr_alldataset':spkr_alldataset,
                     'wave_alldataset':wave_alldataset,
+                    'wave_spec_alldataset':wave_spec_alldataset,
                     'start_ind_alldataset':start_ind_alldataset,
                     'start_ind_wave_alldataset': start_ind_wave_alldataset,
                     'start_ind_valid_alldataset':start_ind_valid_alldataset,
                     'start_ind_wave_valid_alldataset': start_ind_wave_valid_alldataset,
                     'spkr_re_alldataset':spkr_re_alldataset,
                     'wave_re_alldataset':wave_re_alldataset,
+                    'wave_re_spec_alldataset':wave_re_spec_alldataset,
+                    'wave_re_spec_amp_alldataset':wave_re_spec_amp_alldataset,
+                    'wave_re_denoise_alldataset':wave_re_denoise_alldataset,
+                    'wave_re_spec_denoise_alldataset':wave_re_spec_denoise_alldataset,
                     'start_ind_re_alldataset':start_ind_re_alldataset,
                     'start_ind_re_wave_alldataset': start_ind_re_wave_alldataset,
                     'start_ind_re_valid_alldataset':start_ind_re_valid_alldataset,
@@ -633,6 +729,7 @@ class ECoGDataset(Dataset):
                     'spkr_static_alldataset': spkr_static_alldataset,
                     'spkr_re_static_alldataset': spkr_re_static_alldataset,
                     'word_alldataset':word_alldataset,
+                    'noisesample_re_alldataset':noisesample_re_alldataset,
                     }
 
 
@@ -661,6 +758,7 @@ class ECoGDataset(Dataset):
         start_ind_valid_alldataset = self.meta_data['start_ind_valid_alldataset']
         end_ind_valid_alldataset = self.meta_data['end_ind_valid_alldataset']
         wave_alldataset = self.meta_data['wave_alldataset']
+        wave_spec_alldataset = self.meta_data['wave_spec_alldataset']
         spkr_static_alldataset = self.meta_data['spkr_static_alldataset']
         if self.Prod:
             spkr_re_alldataset = self.meta_data['spkr_re_alldataset']
@@ -669,7 +767,11 @@ class ECoGDataset(Dataset):
             end_ind_re_valid_alldataset = self.meta_data['end_ind_re_valid_alldataset']
             start_ind_re_wave_alldataset = self.meta_data['start_ind_re_wave_alldataset']
             end_ind_re_alldataset = self.meta_data['end_ind_re_alldataset']
+            wave_spec_re_alldataset = self.meta_data['wave_re_spec_alldataset']
+            wave_spec_re_amp_alldataset = self.meta_data['wave_re_spec_amp_alldataset']
             wave_re_alldataset = self.meta_data['wave_re_alldataset']
+            wave_spec_re_denoise_alldataset = self.meta_data['wave_re_spec_denoise_alldataset']
+            wave_re_denoise_alldataset = self.meta_data['wave_re_denoise_alldataset']
             spkr_re_static_alldataset = self.meta_data['spkr_re_static_alldataset']
         if not self.Prod:
             n_delay_1 = -16#28 # samples
@@ -686,13 +788,20 @@ class ECoGDataset(Dataset):
         ecog_batch_all = []
         spkr_batch_all = []
         wave_batch_all = []
+        wave_spec_batch_all = []
         ecog_re_batch_all = []
         spkr_re_batch_all = []
         wave_re_batch_all = []
+        wave_spec_re_batch_all = []
+        wave_spec_re_amp_batch_all = []
+        wave_re_denoise_batch_all = []
+        wave_spec_re_denoise_batch_all = []
         label_batch_all = []
         word_batch_all = []
         on_stage_batch_all = []
         on_stage_re_batch_all = []
+        on_stage_wider_batch_all = []
+        on_stage_wider_re_batch_all = []
         self.SeqLenSpkr = self.SeqLen*int(self.DOWN_TF_FS*1.0/self.DOWN_ECOG_FS)
         imagesize = 2**self.current_lod
         for i in range(num_dataset):
@@ -713,6 +822,8 @@ class ECoGDataset(Dataset):
             # ecog_batch = np.zeros((self.SeqLen ,ecog_alldataset[i].shape[-1]))
             spkr_batch = np.zeros(( self.SeqLenSpkr,spkr_alldataset[i].shape[-1]))
             wave_batch = np.zeros(( (self.SeqLen*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS)),wave_alldataset[i].shape[-1]))
+            if self.wavebased:
+                wave_spec_batch = np.zeros(( self.SeqLen, wave_spec_alldataset[i].shape[-1]))
             if self.Prod:
                 start_indx_re = start_ind_re_valid_alldataset[i][rand_ind]
                 end_indx_re = end_ind_re_valid_alldataset[i][rand_ind]
@@ -720,6 +831,8 @@ class ECoGDataset(Dataset):
                 # ecog_batch_re = np.zeros((self.SeqLen ,ecog_alldataset[i].shape[-1]))
                 spkr_batch_re = np.zeros(( self.SeqLenSpkr,spkr_alldataset[i].shape[-1]))
                 wave_batch_re = np.zeros(( (self.SeqLen*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS)),wave_alldataset[i].shape[-1]))
+                if self.wavebased:
+                    wave_spec_batch_re = np.zeros(( self.SeqLen, wave_spec_alldataset[i].shape[-1]))
 
             if self.mode =='train':
                 # indx = np.maximum(indx+np.random.choice(np.arange(np.minimum(-(self.SeqLenSpkr-(end_indx-indx)),-1),np.maximum(-(self.SeqLenSpkr-(end_indx-indx)),0)),1)[0],0)
@@ -741,16 +854,27 @@ class ECoGDataset(Dataset):
             # ecog_batch = ecog_alldataset[i][indx+n_delay_1:indx+self.SeqLen+n_delay_1]
             on_stage_batch = np.zeros([1,self.SeqLenSpkr])
             on_stage_batch[:,np.maximum(start_indx-indx,0): np.minimum(end_indx-indx,self.SeqLenSpkr-1)] = 1.0
+            on_stage_wider_batch = np.zeros([1,self.SeqLenSpkr])
+            on_stage_wider_batch[:,np.maximum(start_indx-indx-5,0): np.minimum(end_indx-indx+5,self.SeqLenSpkr-1)] = 1.0
             spkr_batch = spkr_alldataset[i][indx:indx+self.SeqLenSpkr]
+            if self.wavebased:
+                wave_spec_batch = wave_spec_alldataset[i][indx:indx+self.SeqLen]
             wave_batch = wave_alldataset[i][(indx*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS)):((indx+self.SeqLen)*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS))]
             if self.Prod:
                 # indx_re = indx_re.item()
                 on_stage_re_batch = np.zeros([1,self.SeqLenSpkr])
                 on_stage_re_batch[:,np.maximum(start_indx_re-indx_re,0): np.minimum(end_indx_re-indx_re,self.SeqLenSpkr-1)] = 1.0
+                on_stage_wider_re_batch = np.zeros([1,self.SeqLenSpkr])
+                on_stage_wider_re_batch[:,np.maximum(start_indx_re-indx_re-5,0): np.minimum(end_indx_re-indx_re+5,self.SeqLenSpkr-1)] = 1.0
                 ecog_batch_re = ecog_alldataset[i][indx_re+n_delay_1:indx_re+self.SeqLen+n_delay_2]
                 # ecog_batch_re = ecog_alldataset[i][indx_re+n_delay_1:indx_re+self.SeqLen+n_delay_1]
                 spkr_batch_re = spkr_re_alldataset[i][indx_re:indx_re+self.SeqLenSpkr]
+                if self.wavebased:
+                    wave_spec_batch_re = wave_spec_re_alldataset[i][indx_re:indx_re+self.SeqLen]
+                    wave_spec_batch_amp_re = wave_spec_re_amp_alldataset[i][indx_re:indx_re+self.SeqLen]
+                    wave_spec_batch_re_denoise = wave_spec_re_denoise_alldataset[i][indx_re:indx_re+self.SeqLen]
                 wave_batch_re = wave_re_alldataset[i][(indx_re*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS)):((indx_re+self.SeqLen)*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS))]
+                wave_batch_re_denoise = wave_re_denoise_alldataset[i][(indx_re*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS)):((indx_re+self.SeqLen)*int(self.DOWN_WAVE_FS*1.0/self.DOWN_ECOG_FS))]
             
             mni_batch = self.meta_data['mni_coordinate_alldateset'][i]
             # ecog_batch = ecog_batch[np.newaxis,:,:]
@@ -764,13 +888,22 @@ class ECoGDataset(Dataset):
 
             ecog_batch_all += [ecog_batch]
             spkr_batch_all += [spkr_batch[np.newaxis,...]]
+            if self.wavebased:
+                wave_spec_batch_all += [wave_spec_batch[np.newaxis,...]]
             wave_batch_all += [wave_batch.swapaxes(-2,-1)]
             on_stage_batch_all += [on_stage_batch]
+            on_stage_wider_batch_all += [on_stage_wider_batch]
             if self.Prod:
                 ecog_re_batch_all += [ecog_batch_re]
                 spkr_re_batch_all += [spkr_batch_re[np.newaxis,...]]
+                if self.wavebased:
+                    wave_spec_re_batch_all += [wave_spec_batch_re[np.newaxis,...]]
+                    wave_spec_re_amp_batch_all += [wave_spec_batch_amp_re[np.newaxis,...]]
+                    wave_spec_re_denoise_batch_all += [wave_spec_batch_re_denoise[np.newaxis,...]]
                 wave_re_batch_all += [wave_batch_re.swapaxes(-2,-1)]
+                wave_re_denoise_batch_all += [wave_batch_re_denoise.swapaxes(-2,-1)]
                 on_stage_re_batch_all += [on_stage_re_batch]
+                on_stage_wider_re_batch_all += [on_stage_wider_re_batch]
             label_batch_all +=[label]
             word_batch_all +=[word]
             mni_coordinate_all +=[mni_batch.swapaxes(-2,-1)]
@@ -791,11 +924,20 @@ class ECoGDataset(Dataset):
 
         spkr_batch_all = np.concatenate(spkr_batch_all,axis=0)
         wave_batch_all = np.concatenate(wave_batch_all,axis=0)
+        if self.wavebased:
+            wave_spec_batch_all = np.concatenate(wave_spec_batch_all,axis=0)
         on_stage_batch_all = np.concatenate(on_stage_batch_all,axis=0)
+        on_stage_wider_batch_all = np.concatenate(on_stage_wider_batch_all,axis=0)
         if self.Prod:
             spkr_re_batch_all = np.concatenate(spkr_re_batch_all,axis=0)
+            if self.wavebased:
+                wave_spec_re_batch_all = np.concatenate(wave_spec_re_batch_all,axis=0)
+                wave_spec_re_amp_batch_all = np.concatenate(wave_spec_re_amp_batch_all,axis=0)
+                wave_spec_re_denoise_batch_all = np.concatenate(wave_spec_re_denoise_batch_all,axis=0)
             wave_re_batch_all = np.concatenate(wave_re_batch_all,axis=0)
+            wave_re_denoise_batch_all = np.concatenate(wave_re_denoise_batch_all,axis=0)
             on_stage_re_batch_all = np.concatenate(on_stage_re_batch_all,axis=0)
+            on_stage_wider_re_batch_all = np.concatenate(on_stage_wider_re_batch_all,axis=0)
         label_batch_all = np.concatenate(label_batch_all,axis=0).tolist()
         word_batch_all = np.array(word_batch_all)
         baseline_batch_all = np.concatenate(self.meta_data['baseline_alldataset'],axis=0)
@@ -805,9 +947,14 @@ class ECoGDataset(Dataset):
         return {'ecog_batch_all':ecog_batch_all,
                 'spkr_batch_all':spkr_batch_all,
                 'wave_batch_all':wave_batch_all,
+                'wave_spec_batch_all':wave_spec_batch_all,
                 'ecog_re_batch_all':ecog_re_batch_all,
                 'spkr_re_batch_all':spkr_re_batch_all,
                 'wave_re_batch_all':wave_re_batch_all,
+                'wave_spec_re_batch_all':wave_spec_re_batch_all,
+                'wave_spec_re_amp_batch_all':wave_spec_re_amp_batch_all,
+                'wave_re_denoise_batch_all':wave_re_denoise_batch_all,
+                'wave_spec_re_denoise_batch_all':wave_spec_re_denoise_batch_all,
                 # 'baseline_batch_all':baseline_batch_all,
                 'label_batch_all':label_batch_all,
                 'dataset_names':dataset_names,
@@ -817,6 +964,8 @@ class ECoGDataset(Dataset):
                 'word_batch_all':word_batch_all,
                 'on_stage_batch_all':on_stage_batch_all,
                 'on_stage_re_batch_all':on_stage_re_batch_all,
+                'on_stage_wider_batch_all':on_stage_wider_batch_all,
+                'on_stage_wider_re_batch_all':on_stage_wider_re_batch_all,
                 }
 
 

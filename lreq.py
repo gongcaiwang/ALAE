@@ -400,7 +400,7 @@ class StyleConv2d(Conv2d):
 class Conv1d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, output_padding=0, dilation=1,
                  groups=1, bias=True, gain=np.sqrt(2.0), transpose=False, transform_kernel=False, lrmul=1.0,
-                 implicit_lreq=use_implicit_lreq):
+                 implicit_lreq=use_implicit_lreq, bias_initial = 0.):
         super(Conv1d, self).__init__()
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
@@ -412,6 +412,7 @@ class Conv1d(nn.Module):
         self.stride = make_tuple(stride, 1)
         self.padding = make_tuple(padding, 1)
         self.output_padding = make_tuple(output_padding, 1)
+        self.bias_initial = bias_initial
         self.dilation = make_tuple(dilation, 1)
         self.groups = groups
         self.gain = gain
@@ -443,7 +444,7 @@ class Conv1d(nn.Module):
 
         if self.bias is not None:
             with torch.no_grad():
-                self.bias.zero_()
+                nn.init.constant_(self.bias,self.bias_initial)
 
     def forward(self, x):
         if self.transpose:

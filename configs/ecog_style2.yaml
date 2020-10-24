@@ -21,7 +21,19 @@ DATASET:
   SUBJECT: ['NY742']
 MODEL:
   #####TAKE OFF CHECKLIST!!!########
-  N_FORMANTS: 3
+  N_FORMANTS: 6
+  N_FORMANTS_NOISE: 1
+  N_FORMANTS_ECOG: 2
+  WAVE_BASED : True
+  DO_MEL_GUIDE : False 
+  BGNOISE_FROMDATA: True
+  N_FFT : 256
+  NOISE_DB : -50 #-50
+  MAX_DB : 22.5 #probablity 28 is better
+  NOISE_DB_AMP : -25
+  MAX_DB_AMP : 14
+  POWER_SYNTH: True
+
   LESS_TEMPORAL_FEATURE: True
   LATENT_SPACE_SIZE: 128
   LAYER_COUNT: 6
@@ -32,7 +44,8 @@ MODEL:
   TRUNCATIOM_CUTOFF: 5
   CHANNELS: 1
   UNIQ_WORDS: 50
-  MAPPING_FROM_ECOG: "ECoGMappingTransformer"
+  MAPPING_FROM_ECOG: "ECoGMappingBottleneck"
+  # MAPPING_FROM_ECOG: "ECoGMappingTransformer"
   ECOG: False #will be overloaded if FINETUNE
   SUPLOSS_ON_ECOGF: False # will be overloaded to FIX_GEN if FINETUNE,spec supervise loss only apply to ecog encoder
   W_SUP: False
@@ -50,8 +63,8 @@ MODEL:
   #T            4      8      16    32    64    128 
   ATTENTION: [False, False, False, False, False, False]
   HEADS: 1
-  APPLY_PPL: True
-  APPLY_PPL_D: True
+  APPLY_PPL: False 
+  APPLY_PPL_D: False
   PPL_WEIGHT: 100
   PPL_GLOBAL_WEIGHT: 0
   PPLD_WEIGHT: 1
@@ -65,8 +78,13 @@ MODEL:
     N_HEADS : 4
     NON_LOCAL: True
   # ATTENTION: []
-# OUTPUT_DIR: training_artifacts/debug
-OUTPUT_DIR: training_artifacts/formantsythv2wide_NY742_constraintonFB_Bconstrainrefined_absfreq_3formants
+OUTPUT_DIR: training_artifacts/debug_
+# OUTPUT_DIR: training_artifacts/loudnesscomp_han5_ampamploss
+# OUTPUT_DIR: training_artifacts/loudnesscomp_han5_ampsynth_masknormed
+# OUTPUT_DIR: training_artifacts/debug_f1f2linearmel
+# OUTPUT_DIR: training_artifacts/ecog_finetune_3ecogformants_han5_specsup_guidance_hamonicformantsemph
+# OUTPUT_DIR: training_artifacts/ecog_finetune_3ecogformants_han5_specsup_guidance_hamonicnoiseformantsemphmore
+# OUTPUT_DIR: training_artifacts/formantsythv2_wavebased_NY742_constraintonFB_Bconstrainrefined_absfreq_4formants_1noiseformants_bgnoise_noisemapping_freqconv_duomask
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_noprogressive_HBw_ppl_ppld_localreg_ecogf_w_spec_sup
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_ppl_ppld
 # OUTPUT_DIR: training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures_heads4
@@ -75,7 +93,7 @@ FINETUNE:
   FINETUNE: False
   FIX_GEN: True
   ENCODER_GUIDE: True
-  SPECSUP: False
+  SPECSUP: True
 #####################################
 
 TRAIN:

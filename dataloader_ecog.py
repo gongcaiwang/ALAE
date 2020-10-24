@@ -35,6 +35,7 @@ class TFRecordsDataset:
     def __init__(self, cfg, logger, rank=0, world_size=1, buffer_size_mb=200, channels=3, seed=None, train=True, needs_labels=False,param=None):
         self.param = param
         self.dataset = ECoGDataset(cfg.DATASET.SUBJECT,mode='train' if train else 'test',world_size=world_size)
+        self.noise_dist = self.dataset.meta_data['noisesample_re_alldataset'][0]
         self.cfg = cfg
         self.logger = logger
         self.rank = rank
