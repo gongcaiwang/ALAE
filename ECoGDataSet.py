@@ -141,7 +141,7 @@ class ECoGDataset(Dataset):
         self.BlockRegion = []
         [self.BlockRegion.extend(self.cortex[area]) for area in train_param["BlockRegion"]]
         self.wavebased = cfg.MODEL.WAVE_BASED
-        self.ReshapeAsGrid = False if 'Transformer' in cfg.MODEL.MAPPING_FROM_ECOG else True
+        self.ReshapeAsGrid = False if ('lstm') or ('Transformer') in cfg.MODEL.MAPPING_FROM_ECOG else True
         self.Prod,self.UseGridOnly,self.SeqLen = train_param['Prod'],\
                                                                     train_param['UseGridOnly'],\
                                                                     train_param['SeqLen'],
@@ -339,7 +339,7 @@ class ECoGDataset(Dataset):
                 statics_ecog = baseline.mean(axis=0,keepdims=True)+1E-10, np.sqrt(baseline.var(axis=0, keepdims=True))+1E-10
 
                 ecog = (ecog - statics_ecog[0])/statics_ecog[1]
-                ecog = np.minimum(ecog,5)
+                ecog = np.minimum(ecog,10)#5)
                 ecog_len_+= [ecog.shape[0]]
                 ecog_+=[ecog]
 

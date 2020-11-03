@@ -198,7 +198,9 @@ def subfigure_plot(ax,spec,components,n_mels,which_formant='hamon',formant_line=
          if ecog is not None:
             comp_ecog = ecog['amplitude_formants_hamon'] if title=='amplitude_hamon' else ecog['amplitude_formants_noise']
          plt.sca(ax)
-         plt.yticks(range(0,200,20),(np.arange(0,1,20)).astype(str))
+         ax.set_yticks(np.arange(0,200,20))
+         ax.set_yticklabels(np.arange(0,200,20)/200)
+         #plt.yticks(range(0,200,20),(np.arange(0,1,20)).astype(str))
          ax.imshow(np.clip(1-spec.detach().cpu().numpy().squeeze().T,0,1),vmin=0.0,vmax=1.0)
          for i in range(comp.shape[1]):
             ax.plot(200*comp[:,i].squeeze().detach().cpu().numpy().T,linewidth=2,color=clrs[i])
@@ -372,10 +374,7 @@ def save_sample(sample,ecog,mask_prior,mni,encoder,decoder,ecog_encoder,epoch,la
       fig.savefig(f, bbox_inches='tight',dpi=80)
       plt.close(fig)
 
-      scipy.io.wavfile.write(f2+'denoisewave.wav',16000,torch.cat(rec_denoise_wave_all.unbind(),1)[0].detach().cpu().numpy())
-      if ecog_encoder is not None:
-         scipy.io.wavfile.write(f2+'denoiseecogwave.wav',16000,torch.cat(rec_denoise_ecog_wave_all.unbind(),1)[0].detach().cpu().numpy())
-
+      
       if linear:
          rec_all = amplitude(torch.cat((2*rec_all[:,0]-1).unbind(),0).transpose(-2,-1).detach().cpu().numpy(),-50,22.5,trim_noise=False)
          rec_wave = spsi(rec_all,(n_fft-1)*2,128)
@@ -393,9 +392,18 @@ def save_sample(sample,ecog,mask_prior,mni,encoder,decoder,ecog_encoder,epoch,la
 
       save_image(resultsample, f2, nrow=resultsample.shape[0]//(2 if ecog_encoder is None else 3))
       # import pdb;pdb.set_trace()
-
+      if ecog_encoder is not None:
+         scipy.io.wavfile.write(f2+'denoisewave.wav',16000,torch.cat(rec_denoise_wave_all.unbind(),1)[0].detach().cpu().numpy())
+         scipy.io.wavfile.write(f2+'denoiseecogwave.wav',16000,torch.cat(rec_denoise_ecog_wave_all.unbind(),1)[0].detach().cpu().numpy())
+         if mode =='test':
+            return torch.cat(rec_denoise_ecog_wave_all.unbind(),1)[0].detach().cpu().numpy()
+      else:
+         scipy.io.wavfile.write(f2+'denoisewave.wav',16000,torch.cat(rec_denoise_wave_all.unbind(),1)[0].detach().cpu().numpy())
+         if mode =='test':
+            return torch.cat(rec_denoise_wave_all.unbind(),1)[0].detach().cpu().numpy()
+  
       
-      return
+      
 
 def main():
    OUTPUT_DIR = 'training_artifacts/formantsysth_voicingandunvoicing_loudness_NY742'

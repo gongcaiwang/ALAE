@@ -111,7 +111,8 @@ def _run(rank, world_size, fn, defaults, write_log, no_cuda, args):
         cleanup()
 
 
-def run(fn, defaults, description='', default_config='configs/experiment.yaml', world_size=1, write_log=False, no_cuda=False):
+def run(fn, defaults, description='', default_config='configs/experiment.yaml', world_size=1, write_log=False, no_cuda=False,args=None):
+    '''
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
         "-c", "--config-file",
@@ -126,13 +127,14 @@ def run(fn, defaults, description='', default_config='configs/experiment.yaml', 
         default=None,
         nargs=argparse.REMAINDER,
     )
-
+    args = parser.parse_args()
+    '''
     import multiprocessing
     cpu_count = multiprocessing.cpu_count()
     os.environ["OMP_NUM_THREADS"] = str(max(1, int(cpu_count / world_size)))
     del multiprocessing
 
-    args = parser.parse_args()
+    
 
     if world_size > 1:
         mp.spawn(_run,

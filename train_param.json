@@ -4,7 +4,7 @@
 	"SelectRegion":["AUDITORY","BROCA","MOTO","SENSORY"],
 	"BlockRegion":[],
 	"UseGridOnly":true,
-	"ReshapeAsGrid":true,
+	"ReshapeAsGrid":false,
 	"SeqLen":128,
 	"DOWN_TF_FS": 125,
 	"DOWN_ECOG_FS": 125,

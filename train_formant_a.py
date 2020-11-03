@@ -38,8 +38,20 @@ from torch import autograd
 from ECoGDataSet import concate_batch
 from formant_systh import save_sample
 
+from tensorboardX import SummaryWriter
+
+
+import argparse
+
+parser = argparse.ArgumentParser(description='Process some integers.')
+
+parser.add_argument('-m', '--modeldir', type=str,default=' ',
+                    help='')
+argus = parser.parse_args()
+
 
 def train(cfg, logger, local_rank, world_size, distributed):
+    writer = SummaryWriter(cfg.OUTPUT_DIR)
     torch.cuda.set_device(local_rank)
     model = Model(
         generator=cfg.MODEL.GENERATOR,
@@ -191,11 +203,6 @@ def train(cfg, logger, local_rank, world_size, distributed):
                                 save=local_rank == 0)
 
     extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/ecog_finetune_3ecogformants_han5_specsup_guidance_hamonicformantsemph/model_epoch23.pth')
-    # extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=False,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/debug_f1f2linearmel/model_epoch27.pth')
-    # extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=False,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/debug_fitf1f2freqonly/model_epoch28.pth')
-    # extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=False,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/debug_fitf1f2freqonly/model_epoch6.pth')
-    # extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=True,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/loudnesscomp_han5/model_epoch50.pth')
-    # extra_checkpoint_data = checkpointer.load(ignore_last_checkpoint=False,ignore_auxiliary=cfg.FINETUNE.FINETUNE,file_name='./training_artifacts/test_9/model_epoch30.pth')
     logger.info("Starting from epoch: %d" % (scheduler.start_epoch()))
 
     arguments.update(extra_checkpoint_data)
@@ -262,6 +269,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
     # model.eval()
     # Lrec = model(sample_spec_test, x_denoise = sample_spec_denoise_test,x_mel = sample_spec_mel_test,ecog=ecog_test if cfg.MODEL.ECOG else None, mask_prior=mask_prior_test if cfg.MODEL.ECOG else None, on_stage = on_stage_test,on_stage_wider = on_stage_wider_test, ae = not cfg.MODEL.ECOG, tracker = tracker_test, encoder_guide=cfg.MODEL.W_SUP,pitch_aug=False,duomask=duomask,mni=mni_coordinate_test,debug = False,x_amp=sample_spec_amp_test,hamonic_bias = False)
     # save_sample(sample_spec_test,ecog_test,mask_prior_test,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,x_denoise=sample_spec_denoise_test,x_mel = sample_spec_mel_test,decoder_mel=decoder_mel if cfg.MODEL.DO_MEL_GUIDE else None,epoch=0,label=sample_label_test,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker_test,linear=cfg.MODEL.WAVE_BASED,n_fft=cfg.MODEL.N_FFT,duomask=True)
+    n_iter = 0
     for epoch in range(cfg.TRAIN.TRAIN_EPOCHS):
         model.train()
 
@@ -271,6 +279,7 @@ def train(cfg, logger, local_rank, world_size, distributed):
         epoch_start_time = time.time()
         i = 0
         for sample_dict_train in tqdm(iter(dataset.iterator)):
+            n_iter +=1
             # import pdb; pdb.set_trace()
             # sample_dict_train = concate_batch(sample_dict_train)
             i += 1
@@ -310,12 +319,32 @@ def train(cfg, logger, local_rank, world_size, distributed):
             
             if (cfg.MODEL.ECOG):
                 optimizer.zero_grad()
-                Lrec = model(x, x_denoise = x_orig_denoise,x_mel = x_mel,ecog=ecog, mask_prior=mask_prior, on_stage = on_stage,on_stage_wider = on_stage_wider, ae = False, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP,duomask=duomask,mni=mni_coordinate,x_amp=x_orig_amp)
+                Lrec,tracker  = model(x, x_denoise = x_orig_denoise,x_mel = x_mel,ecog=ecog, mask_prior=mask_prior, on_stage = on_stage,on_stage_wider = on_stage_wider, ae = False, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP,duomask=duomask,mni=mni_coordinate,x_amp=x_orig_amp)
+                #print ('tracker',tracker,tracker.tracks)
+                #for key in ['Lae_a','Lae_a_l2','Lae_db','Lae_db_l2','Lloudness','Lae_denoise','Lamp','Lae','Lexp','Lf0','Ldiff']:
+                #    print ('tracker, ',key, tracker.tracks[key].mean(dim=0))
+                ecog_key_list = ['Lae_a','Lae_a_l2','Lae_db','Lae_db_l2','Lloudness','Lae_denoise','Lamp','Lae','Lexp','Lf0','Ldiff']
+                if n_iter %10==0:
+                    #print ('write tensorboard')
+                    writer.add_scalars('data/loss_group', {key: tracker.tracks[key].mean(dim=0) for key in ecog_key_list}, n_iter)
+                    for key in ecog_key_list:
+                        writer.add_scalar('data/'+key, tracker.tracks[key].mean(dim=0), n_iter)
+                    #pass #log in tensorboard later!!
+                #tracker Lae_a: 0.0536877, Lae_a_l2: 0.0538647, Lae_db: 0.1655398, Lae_db_l2: 0.1655714, Lloudness: 1.0384552, Lae_denoise: 0.0485827, Lamp: 0.0000148, Lae: 2.1787138, Lexp: -1.9956266, Lf0: 0.0000000, Ldiff: 0.0568467
                 (Lrec).backward()
                 optimizer.step()
             else:
                 optimizer.zero_grad()
-                Lrec = model(x, x_denoise = x_orig_denoise,x_mel = x_mel,ecog=None, mask_prior=None, on_stage = on_stage,on_stage_wider = on_stage_wider, ae = True, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP,pitch_aug=False,duomask=duomask,mni=mni_coordinate,debug = False,x_amp=x_orig_amp,hamonic_bias = False)#epoch<2)
+                Lrec,tracker = model(x, x_denoise = x_orig_denoise,x_mel = x_mel,ecog=None, mask_prior=None, on_stage = on_stage,on_stage_wider = on_stage_wider, ae = True, tracker = tracker, encoder_guide=cfg.MODEL.W_SUP,pitch_aug=False,duomask=duomask,mni=mni_coordinate,debug = False,x_amp=x_orig_amp,hamonic_bias = False)#epoch<2)
+                #print ('tracker',tracker,tracker.tracks)
+                #for key in ['Lae_a','Lae_a_l2','Lae_db','Lae_db_l2','Lloudness','Lae_denoise','Lamp','Lae','Lexp','Lf0','Ldiff']:
+                    #print ('tracker, ',key, tracker.tracks[key].mean(dim=0))
+                ecog_key_list = ['Lae_a','Lae_a_l2','Lae_db','Lae_db_l2','Lloudness','Lae_denoise','Lamp','Lae','Lexp','Lf0','Ldiff']
+                if n_iter %10==0:
+                    #print ('write tensorboard')
+                    writer.add_scalars('data/loss_group', {key: tracker.tracks[key].mean(dim=0) for key in ecog_key_list}, n_iter)
+                    for key in ecog_key_list:
+                        writer.add_scalar('data/'+key, tracker.tracks[key].mean(dim=0), n_iter)
                 (Lrec).backward()
                 optimizer.step()
 
@@ -324,18 +353,44 @@ def train(cfg, logger, local_rank, world_size, distributed):
 
             epoch_end_time = time.time()
             per_epoch_ptime = epoch_end_time - epoch_start_time
-
+            #print ('test save sample')
+            #save_sample(sample_spec_test,ecog_test,mask_prior_test,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,x_denoise=sample_spec_denoise_test,x_mel = sample_spec_mel_test,decoder_mel=decoder_mel if cfg.MODEL.DO_MEL_GUIDE else None,epoch=epoch,label=sample_label_test,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker_test,linear=cfg.MODEL.WAVE_BASED,n_fft=cfg.MODEL.N_FFT,duomask=duomask,x_amp=sample_spec_amp_test)
+            #save_sample(x,ecog,mask_prior,mni_coordinate,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,x_denoise=x_orig_denoise,x_mel = sample_spec_mel_test,decoder_mel=decoder_mel if cfg.MODEL.DO_MEL_GUIDE else None,epoch=epoch,label=labels,mode='train',path=cfg.OUTPUT_DIR,tracker = tracker,linear=cfg.MODEL.WAVE_BASED,n_fft=cfg.MODEL.N_FFT,duomask=duomask,x_amp=x_orig_amp)
+            #print ('finish')
 
         if local_rank == 0:
             print(2**(torch.tanh(model.encoder.formant_bandwitdh_slop)))
             checkpointer.save("model_epoch%d" % epoch)
             model.eval()
             Lrec = model(sample_spec_test, x_denoise = sample_spec_denoise_test,x_mel = sample_spec_mel_test,ecog=ecog_test if cfg.MODEL.ECOG else None, mask_prior=mask_prior_test if cfg.MODEL.ECOG else None, on_stage = on_stage_test,on_stage_wider = on_stage_wider_test, ae = not cfg.MODEL.ECOG, tracker = tracker_test, encoder_guide=cfg.MODEL.W_SUP,pitch_aug=False,duomask=duomask,mni=mni_coordinate_test,debug = False,x_amp=sample_spec_amp_test,hamonic_bias = False)
-            save_sample(sample_spec_test,ecog_test,mask_prior_test,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,x_denoise=sample_spec_denoise_test,x_mel = sample_spec_mel_test,decoder_mel=decoder_mel if cfg.MODEL.DO_MEL_GUIDE else None,epoch=epoch,label=sample_label_test,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker_test,linear=cfg.MODEL.WAVE_BASED,n_fft=cfg.MODEL.N_FFT,duomask=duomask,x_amp=sample_spec_amp_test)
-            save_sample(x,ecog,mask_prior,mni_coordinate,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,x_denoise=x_orig_denoise,x_mel = sample_spec_mel_test,decoder_mel=decoder_mel if cfg.MODEL.DO_MEL_GUIDE else None,epoch=epoch,label=labels,mode='train',path=cfg.OUTPUT_DIR,tracker = tracker,linear=cfg.MODEL.WAVE_BASED,n_fft=cfg.MODEL.N_FFT,duomask=duomask,x_amp=x_orig_amp)
-
+            if epoch%1==0:
+                #first mode is test
+                reconaudio = save_sample(sample_spec_test,ecog_test,mask_prior_test,mni_coordinate_test,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,x_denoise=sample_spec_denoise_test,x_mel = sample_spec_mel_test,decoder_mel=decoder_mel if cfg.MODEL.DO_MEL_GUIDE else None,epoch=epoch,label=sample_label_test,mode='test',path=cfg.OUTPUT_DIR,tracker = tracker_test,linear=cfg.MODEL.WAVE_BASED,n_fft=cfg.MODEL.N_FFT,duomask=duomask,x_amp=sample_spec_amp_test)
+                save_sample(x,ecog,mask_prior,mni_coordinate,encoder,decoder,ecog_encoder if cfg.MODEL.ECOG else None,x_denoise=x_orig_denoise,x_mel = sample_spec_mel_test,decoder_mel=decoder_mel if cfg.MODEL.DO_MEL_GUIDE else None,epoch=epoch,label=labels,mode='train',path=cfg.OUTPUT_DIR,tracker = tracker,linear=cfg.MODEL.WAVE_BASED,n_fft=cfg.MODEL.N_FFT,duomask=duomask,x_amp=x_orig_amp)
+                writer.add_audio('reconaudio', reconaudio, n_iter, sample_rate=16000)
+    writer.export_scalars_to_json(cfg.OUTPUT_DIR+"/all_scalars.json")
+    writer.close()     
 
 if __name__ == "__main__":
     gpu_count = torch.cuda.device_count()
-    run(train, get_cfg_defaults(), description='StyleGAN', default_config='configs/ecog_style2.yaml',
-        world_size=gpu_count)
+    cfg = get_cfg_defaults()
+    parser = argparse.ArgumentParser(description='formant')
+    parser.add_argument(
+        "-c", "--config-file",
+        default='configs/ecog_style2_a.yaml',
+        metavar="FILE",
+        help="path to config file",
+        type=str,
+    )
+    parser.add_argument(
+        "opts",
+        help="Modify config options using the command-line",
+        default=None,
+        nargs=argparse.REMAINDER,
+    )
+    args = parser.parse_args()
+    
+    #if args.modeldir !='':
+    #    cfg.OUTPUT_DIR = args.modeldir
+    run(train, cfg, description='StyleGAN', default_config='configs/ecog_style2_a.yaml',
+        world_size=gpu_count,args=args)

@@ -23,7 +23,7 @@ MODEL:
   #####TAKE OFF CHECKLIST!!!########
   N_FORMANTS: 6
   N_FORMANTS_NOISE: 1
-  N_FORMANTS_ECOG: 6
+  N_FORMANTS_ECOG: 2
   WAVE_BASED : True
   DO_MEL_GUIDE : False 
   BGNOISE_FROMDATA: True
@@ -44,15 +44,7 @@ MODEL:
   TRUNCATIOM_CUTOFF: 5
   CHANNELS: 1
   UNIQ_WORDS: 50
-  #MAPPING_FROM_ECOG: "ECoGMappingBottleneck"  #ECoGMappingBottlenecklstm1, ECoGMappingBottlenecklstm2
-  #MAPPING_FROM_ECOG: "ECoGMappingBottlenecklstm1"
-  #MAPPING_FROM_ECOG: "ECoGMappingBottlenecklstm"
-  MAPPING_FROM_ECOG: "ECoGMappingBottlenecklstm_pure"
-  ONEDCONFIRST: True
-  RNN_TYPE: 'LSTM'
-  RNN_LAYERS: 4
-  RNN_COMPUTE_DB_LOUDNESS: True
-  BIDIRECTION: True
+  MAPPING_FROM_ECOG: "ECoGMappingBottleneck"
   # MAPPING_FROM_ECOG: "ECoGMappingTransformer"
   ECOG: False #will be overloaded if FINETUNE
   SUPLOSS_ON_ECOGF: False # will be overloaded to FIX_GEN if FINETUNE,spec supervise loss only apply to ecog encoder
@@ -86,11 +78,7 @@ MODEL:
     N_HEADS : 4
     NON_LOCAL: True
   # ATTENTION: []
-#OUTPUT_DIR: output/ecog_10241800_lstm1 #training_artifacts/debug
-#OUTPUT_DIR: output/ecog_10241800_lstm2
-#OUTPUT_DIR: output/ecog_11011800_conv #after change loudness encoder
-#OUTPUT_DIR: output/ecog_11011800_lstm1 #after change loudness encoder
-OUTPUT_DIR: output/ecog_11021800_lstm1 #after change loudness encoder
+OUTPUT_DIR: output/audio_11021700 #training_artifacts/debug_
 # OUTPUT_DIR: training_artifacts/loudnesscomp_han5_ampamploss
 # OUTPUT_DIR: training_artifacts/loudnesscomp_han5_ampsynth_masknormed
 # OUTPUT_DIR: training_artifacts/debug_f1f2linearmel
@@ -100,8 +88,9 @@ OUTPUT_DIR: output/ecog_11021800_lstm1 #after change loudness encoder
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_noprogressive_HBw_ppl_ppld_localreg_ecogf_w_spec_sup
 # OUTPUT_DIR: training_artifacts/ecog_residual_latent128_temporal_lesstemporalfeature_ppl_ppld
 # OUTPUT_DIR: training_artifacts/ecog_residual_cycle_attention3264wStyleIN_specchan64_more_attentfeatures_heads4
+
 FINETUNE:
-  FINETUNE: True
+  FINETUNE: False
   FIX_GEN: True
   ENCODER_GUIDE: True
   SPECSUP: True
